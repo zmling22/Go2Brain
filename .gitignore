@@ -22,7 +22,13 @@ Thumbs.db
 *.swp
 *.swo
 *.tmp
+*.avi
+*.so
+*.out
 
 # Backups
 .git_backup_before_src_repo/
 **/.git_backup_before_src_repo/
+
+# Built binaries checked into subfolders
+go2_ros2_toolbox/unitree_pkgs/go2_h264_repub/go2_h264_repub
