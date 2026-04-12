@@ -9,11 +9,73 @@
 - `flask`：Web 侧桥接与 Dashboard 服务
 - `go2_record_toolbox`：录像与简单采集工具
 
+## 环境要求
+
+> 注意：这套代码主要面向 Unitree Go2 EDU 扩展坞自带计算机环境，其他环境未完整验证。
+
+建议环境：
+
+- 操作系统：Ubuntu 20.04
+- ROS 版本：ROS2 Foxy
+- 机器人固件：Go2 EDU v1.1.7
+
+## 环境安装
+
+### 1. 安装官方 Unitree ROS2 包
+
+先安装 Unitree 官方 ROS2 依赖，参考：
+
+```bash
+# 参考官方安装指南
+# https://github.com/unitreerobotics/unitree_ros2
+```
+
+### 2. 安装 ROS2 依赖包
+
+```bash
+sudo apt-get install ros-foxy-navigation2 \
+                     ros-foxy-nav2-bringup \
+                     ros-foxy-pcl-ros \
+                     ros-foxy-tf-transformations \
+                     ros-foxy-slam-toolbox
+```
+
+### 3. 安装 Python 依赖
+
+```bash
+pip3 install transforms3d
+```
+
+### 4. 获取工作区代码
+
+如果是全新环境，可以这样准备工作区：
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/zmling22/Go2Brain.git .
+```
+
+### 5. 编译工作区
+
+在工作区根目录执行：
+
+```bash
+cd ~/ros2_ws
+colcon build
+```
+
+编译完成后加载环境：
+
+```bash
+source ~/ros2_ws/install/setup.bash
+```
+
 ## 快速开始
 
 ### 基础导航
 
-环境安装教程参考 `go2_ros2_toolbox/README.md`。安装完成后执行下面指令可以启动可视化界面并进入建图导航模式：
+安装完成后执行下面指令可以启动可视化界面并进入建图导航模式：
 
 ```bash
 source ros2_ws/install/setup.bash
