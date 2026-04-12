@@ -1,0 +1,28 @@
+# ROS 2 build artifacts
+build/
+install/
+log/
+**/build/
+**/install/
+**/log/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Runtime / temp files
+*.swp
+*.swo
+*.tmp
+
+# Backups
+.git_backup_before_src_repo/
+**/.git_backup_before_src_repo/

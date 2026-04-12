@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Go2 Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <section class="panel hero-panel">
+        <h1>Go2 Dashboard</h1>
+        <p class="muted">地图优先的巡检控制台</p>
+      </section>
+
+      <section class="panel camera-panel">
+        <div class="toolbar compact">
+          <div>
+            <div class="section-title">RGB 画面</div>
+            <div class="hint">`/camera/camera/color/image_raw`</div>
+          </div>
+          <div class="toolbar-right">
+            <div class="badge" id="cameraStatus">相机未连接</div>
+            <button id="toggleCameraPanel" class="ghost">折叠</button>
+          </div>
+        </div>
+        <div class="camera-shell" id="cameraShell">
+          <img id="cameraFeed" class="camera-feed" alt="Go2 RGB Camera">
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">文本指令</div>
+        <form id="commandForm">
+          <textarea id="commandInput" rows="4" placeholder="例如：去客厅巡检，然后回到停靠站"></textarea>
+          <button type="submit">发送指令</button>
+        </form>
+        <div class="hint">发送结果显示在地图左下角反馈面板</div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">巡检路线</div>
+        <div class="hint">路线操作在地图右上角，这里只保留当前草稿列表。</div>
+        <ol id="routeList" class="route-list"></ol>
+      </section>
+    </aside>
+
+    <main class="main">
+      <section class="panel canvas-panel map-priority">
+        <div class="map-header">
+          <div>
+            <div class="section-title">地图视图</div>
+            <div class="hint">占据栅格、机器人位姿、全局规划路径、历史轨迹与巡检路线</div>
+          </div>
+          <div class="map-chip-row">
+            <div class="badge" id="mapStatus">地图未加载</div>
+          </div>
+        </div>
+        <div class="map-stage">
+          <canvas id="mapCanvas" width="1200" height="800"></canvas>
+
+          <div class="map-overlay top-left">
+            <div class="overlay-title">实时状态</div>
+            <div class="overlay-metric"><span>导航</span><strong id="floatingNavStatus">-</strong></div>
+            <div class="overlay-metric"><span>位置</span><strong id="floatingPose">-</strong></div>
+            <div class="overlay-metric"><span>速度</span><strong id="floatingSpeed">-</strong></div>
+            <div class="overlay-metric"><span>轨迹点数</span><strong id="floatingTrajectoryCount">0</strong></div>
+            <div class="overlay-metric"><span>路线进度</span><strong id="floatingRouteSummary">0</strong></div>
+          </div>
+
+          <div class="map-overlay top-right">
+            <div class="overlay-title">巡检路线</div>
+            <div class="map-controls">
+              <button id="toggleRouteMode">开始选点</button>
+              <button id="sendRoute" class="secondary">下发路线</button>
+              <button id="cancelRoute" class="secondary">取消执行</button>
+              <button id="clearDraft" class="ghost">清空草稿</button>
+              <button id="clearTrajectory" class="ghost">清空轨迹</button>
+            </div>
+            <div class="hint">点击地图添加 waypoint，滚轮缩放，拖拽平移。</div>
+          </div>
+
+          <div class="map-overlay bottom-left wide">
+            <div class="overlay-title">执行反馈</div>
+            <div class="overlay-log" id="commandResult">等待发送</div>
+            <div class="overlay-sublog" id="navLog">暂无导航日志</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

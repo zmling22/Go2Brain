@@ -1,0 +1,51 @@
+semantic_locations:
+  living_room:
+    frame_id: "map"
+    x: -0.64925
+    y: -1.63443
+    yaw: -1.86325
+  kitchen:
+    frame_id: "map"
+    x: 1.49081
+    y: -1.40527
+    yaw: 1.28773
+  dock:
+    frame_id: "map"
+    x: -1.38715
+    y: 1.21892
+    yaw: -0.398055
+  office:
+    frame_id: "map"
+    x: -0.483259
+    y: 0.179826
+    yaw: 0.470337
+  toilet:
+    frame_id: "map"
+    x: -4.72129
+    y: -1.90346
+    yaw: -1.8267
+  bedroom:
+    frame_id: "map"
+    x: -2.98875
+    y: 0.497792
+    yaw: 2.16531
+  diningroom:
+    frame_id: "map"
+    x: -3.17387
+    y: -1.36149
+    yaw: -1.84779
+  door:
+    frame_id: "map"
+    x: 1.16586
+    y: -3.80254
+    yaw: -1.58166
+
+semantic_alias:
+  living_room: ["客厅", "到客厅", "去客厅", "回客厅"]
+  kitchen: ["厨房", "到厨房", "去厨房"]
+  dock: ["dock", "停靠站", "对接站"]
+  office: ["办公室", "办公区", "到办公室"]
+  toilet: ["厕所", "洗手间", "卫生间", "廁所"]
+  bedroom: ["卧室", "睡觉的地方", "休息区", "休息區", "臥室"]
+  diningroom: ["餐厅", "吃饭的地方", "用餐区"]
+  door: ["门口", "大门", "出入口"]

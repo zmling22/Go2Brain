@@ -1,0 +1,10 @@
+<library path="libgo2_rviz_plugins">
+  <class
+      name="go2_rviz_plugins::NLCommandPanel"
+      type="go2_rviz_plugins::NLCommandPanel"
+      base_class_type="rviz_common::Panel">
+    <description>
+      语义导航命令输入面板，向 /nl_command 发布 std_msgs/String。
+    </description>
+  </class>
+</library>
