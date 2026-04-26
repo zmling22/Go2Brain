@@ -3,6 +3,8 @@ const appState = {
   overlay: null,
   status: null,
   draftRoute: [],
+  patrolRoute: [],
+  patrolState: null,
   routeMode: false,
   view: {
     scale: 1,
@@ -53,6 +55,11 @@ function updateStatusPanel(status) {
   document.getElementById("cameraStatus").textContent = status.camera_available
     ? `相机在线 ${new Date(status.camera_stamp * 1000).toLocaleTimeString()}`
     : "相机未连接";
+
+  const detectionBtn = document.getElementById("toggleDetection");
+  const detEnabled = status.detection_enabled;
+  detectionBtn.textContent = detEnabled ? "\u{1F3AF} 隐藏检测" : "\u{1F3AF} 显示检测";
+  detectionBtn.classList.toggle("active", detEnabled);
 }
 
 function updateRouteList() {
@@ -101,6 +108,30 @@ function refreshCameraFrame() {
   if (!img.dataset.streaming) {
     img.src = "/api/camera/stream";
     img.dataset.streaming = "1";
+  }
+}
+
+async function refreshDetectionStats() {
+  try {
+    const data = await fetchJSON("/api/detection");
+    if (!data.ok) return;
+
+    document.getElementById("detectionCount").textContent = `${data.count} 个目标`;
+    document.getElementById("detectionCount").style.display = data.enabled ? "" : "none";
+
+    const list = document.getElementById("detectionList");
+    if (data.enabled && data.count > 0) {
+      list.innerHTML = data.objects.map((obj, i) => {
+        const pct = (obj.confidence * 100).toFixed(0);
+        return `<div class="detection-item"><span class="detection-label">${i + 1}. ${obj.label}</span><span class="detection-conf">${pct}%</span></div>`;
+      }).join("");
+    } else if (data.enabled) {
+      list.innerHTML = '<span class="hint">未检测到目标</span>';
+    } else {
+      list.innerHTML = '<span class="hint">检测已关闭，点击上方按钮开启</span>';
+    }
+  } catch (_err) {
+    // ignore
   }
 }
 
@@ -277,6 +308,8 @@ function draw() {
 
   drawPolyline(appState.draftRoute, "#1d5c4e", 2);
   drawWaypoints(appState.draftRoute, -1, "#1d5c4e");
+
+  drawPatrolDetections();
 }
 
 document.getElementById("commandForm").addEventListener("submit", async (event) => {
@@ -304,6 +337,18 @@ document.getElementById("toggleCameraPanel").addEventListener("click", () => {
   shell.classList.toggle("collapsed");
   document.getElementById("toggleCameraPanel").textContent =
     shell.classList.contains("collapsed") ? "展开" : "折叠";
+});
+
+document.getElementById("toggleDetection").addEventListener("click", async () => {
+  const status = appState.status;
+  const enabled = status ? !status.detection_enabled : true;
+  await fetchJSON("/api/detection/toggle", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({enable: enabled}),
+  });
+  // Refresh status to update button text immediately
+  await refreshStatus();
 });
 
 document.getElementById("clearDraft").addEventListener("click", () => {
@@ -393,6 +438,188 @@ canvas.addEventListener("wheel", (event) => {
 
 window.addEventListener("resize", resizeCanvas);
 
+// ---- patrol ----
+
+async function refreshPatrolState() {
+  try {
+    const data = await fetchJSON("/api/patrol/state");
+    if (!data.ok) return;
+    appState.patrolState = data;
+    updatePatrolPanel(data);
+  } catch (_err) {
+    // ignore
+  }
+}
+
+function updatePatrolPanel(state) {
+  const badge = document.getElementById("patrolStatusBadge");
+  const progress = document.getElementById("patrolProgress");
+  const info = document.getElementById("patrolInfo");
+
+  badge.textContent = statusLabel(state.status);
+
+  if (state.active) {
+    const wp = state.current_index + 1;
+    const total = state.waypoint_count;
+    progress.textContent = `${wp} / ${total} 航点`;
+    info.innerHTML = `<span class="patrol-person-count">检测到 <strong>${state.person_count}</strong> 人</span>`;
+  } else if (state.status === "completed" || state.status === "partial") {
+    progress.textContent = "已完成";
+    info.innerHTML = `<span class="patrol-person-count">共检测到 <strong>${state.person_count}</strong> 人</span>`;
+    if (state.report) {
+      renderPatrolReport(state.report);
+    }
+  } else if (state.status === "aborted") {
+    progress.textContent = "已中止";
+    info.innerHTML = `<span class="patrol-person-count">检测到 <strong>${state.person_count}</strong> 人（部分报告）</span>`;
+    if (state.report) {
+      renderPatrolReport(state.report);
+    }
+  } else {
+    progress.textContent = "";
+    info.innerHTML = "";
+  }
+
+  document.getElementById("generatePatrolRoute").disabled = state.active;
+  document.getElementById("startPatrol").disabled = state.active || appState.patrolRoute.length === 0;
+  document.getElementById("stopPatrol").disabled = !state.active;
+}
+
+function statusLabel(s) {
+  const labels = {
+    idle: "就绪", generating: "生成路线中", route_ready: "路线已生成",
+    running: "巡逻中", completed: "已完成", partial: "部分完成",
+    aborted: "已中止",
+  };
+  return labels[s] || s;
+}
+
+async function handleGenerateRoute() {
+  // Immediately show generating state
+  document.getElementById("patrolStatusBadge").textContent = "正在生成路径";
+  document.getElementById("generatePatrolRoute").disabled = true;
+
+  const res = await fetchJSON("/api/patrol/generate", { method: "POST" });
+
+  document.getElementById("generatePatrolRoute").disabled = false;
+
+  if (!res.ok) {
+    document.getElementById("commandResult").textContent = `路线生成失败: ${res.error}`;
+    return;
+  }
+  appState.patrolRoute = res.waypoints || [];
+  appState.draftRoute = res.waypoints || [];
+  updateRouteList();
+  document.getElementById("startPatrol").disabled = false;
+  document.getElementById("commandResult").textContent =
+    `自动路线已生成: ${res.waypoints.length} 个航点`;
+  draw();
+}
+
+async function handleStartPatrol() {
+  const res = await fetchJSON("/api/patrol/start", { method: "POST" });
+  if (!res.ok) {
+    document.getElementById("commandResult").textContent = `巡逻启动失败: ${res.error}`;
+    return;
+  }
+  document.getElementById("commandResult").textContent = `巡逻已启动: ${res.message}`;
+  // clear previous report
+  document.getElementById("patrolReport").style.display = "none";
+}
+
+async function handleStopPatrol() {
+  const res = await fetchJSON("/api/patrol/stop", { method: "POST" });
+  document.getElementById("commandResult").textContent = res.message || "巡逻已停止";
+}
+
+function renderPatrolReport(report) {
+  const panel = document.getElementById("patrolReport");
+  const body = document.getElementById("patrolReportBody");
+  panel.style.display = "block";
+
+  const route = report.route_summary || {};
+  const summary = report.summary || {};
+  const persons = report.persons || [];
+  const warnings = report.warnings || [];
+
+  let html = `
+    <div class="report-summary-row">
+      <div class="report-stat">
+        <span class="report-stat-value">${report.duration_seconds.toFixed(0)}s</span>
+        <span class="report-stat-label">耗时</span>
+      </div>
+      <div class="report-stat">
+        <span class="report-stat-value">${route.completed_waypoints}/${route.total_waypoints}</span>
+        <span class="report-stat-label">航点</span>
+      </div>
+      <div class="report-stat">
+        <span class="report-stat-value">${summary.total_person_detections}</span>
+        <span class="report-stat-label">人员检测</span>
+      </div>
+      <div class="report-stat">
+        <span class="report-stat-value">${summary.unique_locations}</span>
+        <span class="report-stat-label">不同位置</span>
+      </div>
+    </div>
+    <div class="report-meta">
+      ${report.start_time} &ndash; ${report.end_time}<br>
+      状态: ${statusLabel(report.status)}
+    </div>`;
+
+  if (warnings.length > 0) {
+    html += `<div class="report-warnings"><strong>警告:</strong><ul>`;
+    warnings.forEach(w => { html += `<li>${w}</li>`; });
+    html += `</ul></div>`;
+  }
+
+  if (persons.length > 0) {
+    html += `<div class="report-persons"><strong>人员检测记录:</strong><table class="report-table">
+      <tr><th>#</th><th>时间</th><th>航点</th><th>位置</th><th>置信度</th><th>照片</th></tr>`;
+    persons.forEach((p, i) => {
+      const pos = (p.map_x != null && p.map_y != null)
+        ? `(${p.map_x.toFixed(2)}, ${p.map_y.toFixed(2)})` : "—";
+      const photo = p.photo
+        ? `<a href="${p.photo}" target="_blank"><img src="${p.photo}" class="report-thumb"></a>`
+        : "—";
+      html += `<tr>
+        <td>${i + 1}</td>
+        <td>${p.time || "—"}</td>
+        <td>${p.waypoint_index >= 0 ? p.waypoint_index + 1 : "—"}</td>
+        <td>${pos}</td>
+        <td>${(p.confidence * 100).toFixed(0)}%</td>
+        <td>${photo}</td>
+      </tr>`;
+    });
+    html += `</table></div>`;
+  } else {
+    html += `<div class="report-no-persons">未检测到人员</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function drawPatrolDetections() {
+  const ps = appState.patrolState;
+  if (!ps || !ps.detections) return;
+
+  ps.detections.forEach(d => {
+    if (d.map_x == null || d.map_y == null) return;
+    const p = worldToScreen(d.map_x, d.map_y);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = "#d1495b";
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("P", p.x, p.y);
+  });
+}
+
 async function boot() {
   resizeCanvas();
   updateRouteList();
@@ -400,9 +627,19 @@ async function boot() {
   await refreshMap();
   await refreshOverlay();
   refreshCameraFrame();
+  await refreshPatrolState();
   setInterval(refreshStatus, 1000);
   setInterval(refreshOverlay, 700);
   setInterval(refreshMap, 3000);
+  setInterval(refreshDetectionStats, 1000);
+  setInterval(refreshPatrolState, 500);
+
+  document.getElementById("generatePatrolRoute").addEventListener("click", handleGenerateRoute);
+  document.getElementById("startPatrol").addEventListener("click", handleStartPatrol);
+  document.getElementById("stopPatrol").addEventListener("click", handleStopPatrol);
+  document.getElementById("closePatrolReport").addEventListener("click", () => {
+    document.getElementById("patrolReport").style.display = "none";
+  });
 }
 
 boot();

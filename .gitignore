@@ -25,6 +25,7 @@ Thumbs.db
 *.avi
 *.so
 *.out
+*.pt
 
 # Backups
 .git_backup_before_src_repo/

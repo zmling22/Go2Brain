@@ -13,10 +13,18 @@ def generate_launch_description():
     use_slam = LaunchConfiguration('use_slam')
     use_slam_arg = DeclareLaunchArgument(
         'use_slam',
-        default_value='false',   # 默认：false -> 使用“加载地图+定位”模式
+        default_value='false',
         description='Whether to run SLAM for mapping (true) or localization using existing map (false)'
     )
     ld.add_action(use_slam_arg)
+
+    detection_enable = LaunchConfiguration('detection_enable')
+    detection_enable_arg = DeclareLaunchArgument(
+        'detection_enable',
+        default_value='true',
+        description='Whether to enable real-time object detection (YOLO)'
+    )
+    ld.add_action(detection_enable_arg)
 
     # 获取包路径
     go2_core_dir = get_package_share_directory('go2_core')
@@ -87,11 +95,26 @@ def generate_launch_description():
         output='screen'
     )
 
+    # 6. 启动目标检测节点
+    detection_node = Node(
+        package='go2_core',
+        executable='detection_node.py',
+        name='detection_node',
+        output='screen',
+        condition=IfCondition(detection_enable),
+        parameters=[{
+            'conf_threshold': 0.5,
+            'inference_skip': 2,
+            'enable': True,
+        }]
+    )
+
     ld.add_action(go2_base_launch)
     ld.add_action(pointcloud_process_launch)
     ld.add_action(slam_toolbox_launch)
     ld.add_action(slam_localization_node)
     ld.add_action(nav2_launch)
     ld.add_action(rviz_node)
+    ld.add_action(detection_node)
 
     return ld

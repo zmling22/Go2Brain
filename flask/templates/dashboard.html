@@ -27,6 +27,18 @@
         </div>
         <div class="camera-shell" id="cameraShell">
           <img id="cameraFeed" class="camera-feed" alt="Go2 RGB Camera">
+          <div class="camera-controls">
+            <button id="toggleDetection" class="ghost" title="在画面上叠加检测框">🎯 显示检测</button>
+          </div>
+        </div>
+        <div class="detection-panel" id="detectionPanel">
+          <div class="detection-header">
+            <span class="detection-title">检测结果</span>
+            <span class="badge" id="detectionCount">0 个目标</span>
+          </div>
+          <div class="detection-list" id="detectionList">
+            <span class="hint">等待检测数据...</span>
+          </div>
         </div>
       </section>
 
@@ -37,6 +49,27 @@
           <button type="submit">发送指令</button>
         </form>
         <div class="hint">发送结果显示在地图左下角反馈面板</div>
+      </section>
+
+      <section class="panel patrol-panel">
+        <div class="section-title">自主巡逻</div>
+        <div class="patrol-controls">
+          <button id="generatePatrolRoute" title="从地图自动生成覆盖路线">自动生成路线</button>
+          <button id="startPatrol" class="secondary" disabled>开始巡逻</button>
+          <button id="stopPatrol" class="ghost" disabled>停止巡逻</button>
+        </div>
+        <div class="patrol-status">
+          <span class="badge" id="patrolStatusBadge">就绪</span>
+          <span id="patrolProgress" class="patrol-progress"></span>
+        </div>
+        <div class="patrol-info" id="patrolInfo"></div>
+        <div class="patrol-report" id="patrolReport" style="display:none">
+          <div class="patrol-report-header">
+            <span class="patrol-report-title">巡逻报告</span>
+            <button id="closePatrolReport" class="ghost">关闭</button>
+          </div>
+          <div id="patrolReportBody"></div>
+        </div>
       </section>
 
       <section class="panel">

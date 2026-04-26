@@ -77,6 +77,10 @@ install(
   PROGRAMS go2_core/realsense_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
+install(
+  PROGRAMS go2_core/detection_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 install(
   DIRECTORY launch
