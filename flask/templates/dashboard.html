@@ -22,6 +22,7 @@
           </div>
           <div class="toolbar-right">
             <div class="badge" id="cameraStatus">相机未连接</div>
+            <span class="fps-badge" id="cameraFps"></span>
             <button id="toggleCameraPanel" class="ghost">折叠</button>
           </div>
         </div>
@@ -72,6 +73,18 @@
         </div>
       </section>
 
+      <section class="panel regions-panel">
+        <div class="section-title">区域分割</div>
+        <div class="regions-controls">
+          <button id="segmentMapBtn">分割地图</button>
+          <button id="saveRegionsBtn" class="secondary" disabled>保存 YAML</button>
+          <button id="clearRegionsBtn" class="ghost" disabled>清除</button>
+        </div>
+        <div id="regionList" class="region-list">
+          <span class="hint">点击"分割地图"自动识别房间和走廊</span>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-title">巡检路线</div>
         <div class="hint">路线操作在地图右上角，这里只保留当前草稿列表。</div>
@@ -88,6 +101,7 @@
           </div>
           <div class="map-chip-row">
             <div class="badge" id="mapStatus">地图未加载</div>
+            <span class="fps-badge" id="mapFps"></span>
           </div>
         </div>
         <div class="map-stage">

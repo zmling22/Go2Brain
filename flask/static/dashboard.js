@@ -1,3 +1,21 @@
+const REGION_COLORS = [
+  { fill: "rgba(74, 144, 217, 0.20)", stroke: "rgba(74, 144, 217, 0.85)" },
+  { fill: "rgba(217, 130, 43, 0.20)", stroke: "rgba(217, 130, 43, 0.85)" },
+  { fill: "rgba(71, 184, 129, 0.20)", stroke: "rgba(71, 184, 129, 0.85)" },
+  { fill: "rgba(217, 74, 106, 0.20)", stroke: "rgba(217, 74, 106, 0.85)" },
+  { fill: "rgba(138, 99, 210, 0.20)", stroke: "rgba(138, 99, 210, 0.85)" },
+  { fill: "rgba(217, 184, 74, 0.20)", stroke: "rgba(217, 184, 74, 0.85)" },
+  { fill: "rgba(74, 184, 217, 0.20)", stroke: "rgba(74, 184, 217, 0.85)" },
+  { fill: "rgba(217, 106, 74, 0.20)", stroke: "rgba(217, 106, 74, 0.85)" },
+  { fill: "rgba(106, 138, 217, 0.20)", stroke: "rgba(106, 138, 217, 0.85)" },
+  { fill: "rgba(74, 217, 138, 0.20)", stroke: "rgba(74, 217, 138, 0.85)" },
+  { fill: "rgba(184, 74, 217, 0.20)", stroke: "rgba(184, 74, 217, 0.85)" },
+  { fill: "rgba(217, 74, 74, 0.20)", stroke: "rgba(217, 74, 74, 0.85)" },
+  { fill: "rgba(74, 217, 184, 0.20)", stroke: "rgba(74, 217, 184, 0.85)" },
+  { fill: "rgba(138, 106, 74, 0.20)", stroke: "rgba(138, 106, 74, 0.85)" },
+  { fill: "rgba(106, 217, 74, 0.20)", stroke: "rgba(106, 217, 74, 0.85)" },
+];
+
 const appState = {
   map: null,
   overlay: null,
@@ -6,6 +24,10 @@ const appState = {
   patrolRoute: [],
   patrolState: null,
   routeMode: false,
+  regions: [],
+  regionColors: {},
+  regionHighlight: null,
+  selectedRegion: null,
   view: {
     scale: 1,
     offsetX: 0,
@@ -52,9 +74,15 @@ function updateStatusPanel(status) {
   document.getElementById("mapStatus").textContent = status.map_available
     ? `地图已加载 #${status.map_seq}`
     : "地图未加载";
+  document.getElementById("mapFps").textContent = status.map_fps > 0
+    ? `${status.map_fps.toFixed(1)} FPS`
+    : "";
   document.getElementById("cameraStatus").textContent = status.camera_available
     ? `相机在线 ${new Date(status.camera_stamp * 1000).toLocaleTimeString()}`
     : "相机未连接";
+  document.getElementById("cameraFps").textContent = status.camera_fps > 0
+    ? `${status.camera_fps.toFixed(1)} FPS`
+    : "";
 
   const detectionBtn = document.getElementById("toggleDetection");
   const detEnabled = status.detection_enabled;
@@ -82,13 +110,15 @@ async function fetchJSON(url, options = {}) {
 async function refreshStatus() {
   const data = await fetchJSON("/api/status");
   appState.status = data;
+  appState.robotRegion = data.robot_region;
   updateStatusPanel(data);
 }
 
 async function refreshMap() {
   try {
-    const data = await fetchJSON("/api/map");
-    if (data.ok && (!appState.map || appState.map.seq !== data.seq)) {
+    const seq = appState.map ? appState.map.seq : 0;
+    const data = await fetchJSON(`/api/map?seq=${seq}`);
+    if (data.ok && data.changed) {
       appState.map = data;
       fitMapToView();
       draw();
@@ -99,8 +129,25 @@ async function refreshMap() {
 
 async function refreshOverlay() {
   const data = await fetchJSON("/api/overlay");
+  if (!data.ok) return;
+  // preserve pose from fast pose endpoint if available
+  const currentPose = appState.overlay && appState.overlay._fastPose;
   appState.overlay = data;
+  if (currentPose) appState.overlay.pose = currentPose;
   draw();
+}
+
+async function refreshPose() {
+  try {
+    const data = await fetchJSON("/api/pose");
+    if (!data.ok) return;
+    if (!appState.overlay) appState.overlay = {};
+    appState.overlay._fastPose = data.pose;
+    appState.overlay.pose = data.pose;
+    if (data.speed && appState.status) appState.status.speed = data.speed;
+    draw();
+  } catch (_err) {
+  }
 }
 
 function refreshCameraFrame() {
@@ -297,6 +344,7 @@ function draw() {
   ctx.clearRect(0, 0, rect.width, rect.height);
   drawGrid();
   drawMap();
+  drawRegions();
 
   if (appState.overlay) {
     drawPolyline(appState.overlay.plan, "#355f8d", 3);
@@ -308,6 +356,11 @@ function draw() {
 
   drawPolyline(appState.draftRoute, "#1d5c4e", 2);
   drawWaypoints(appState.draftRoute, -1, "#1d5c4e");
+
+  // highlight robot region from live status
+  if (appState.robotRegion && !appState.regionHighlight) {
+    appState.regionHighlight = appState.robotRegion;
+  }
 
   drawPatrolDetections();
 }
@@ -620,6 +673,258 @@ function drawPatrolDetections() {
   });
 }
 
+// ---- region segmentation ----
+
+async function refreshRegions() {
+  try {
+    const data = await fetchJSON("/api/map/regions");
+    if (data.ok) {
+      const changed = JSON.stringify(data.regions) !== JSON.stringify(appState.regions);
+      appState.regions = data.regions || [];
+      appState.robotRegion = data.robot_region;
+      if (changed) {
+        assignRegionColors();
+        updateRegionList();
+        draw();
+      }
+    }
+  } catch (_err) {
+    // ignore
+  }
+}
+
+function assignRegionColors() {
+  const colors = {};
+  appState.regions.forEach((reg, i) => {
+    colors[reg.id] = REGION_COLORS[i % REGION_COLORS.length];
+  });
+  appState.regionColors = colors;
+}
+
+function drawRegions() {
+  if (!appState.map || !appState.regions.length) return;
+
+  appState.regions.forEach(reg => {
+    const colors = appState.regionColors[reg.id];
+    if (!colors) return;
+    const boundary = reg.boundary || [];
+    const holes = reg.holes || [];
+    if (boundary.length < 3) return;
+
+    ctx.beginPath();
+
+    // outer boundary
+    boundary.forEach((pt, i) => {
+      const p = worldToScreen(pt.x, pt.y);
+      ctx[i === 0 ? "moveTo" : "lineTo"](p.x, p.y);
+    });
+    ctx.closePath();
+
+    // holes (reverse winding for evenodd rule)
+    holes.forEach(hole => {
+      if (hole.length < 3) return;
+      // trace in reverse order to ensure opposite winding
+      for (let i = hole.length - 1; i >= 0; i--) {
+        const p = worldToScreen(hole[i].x, hole[i].y);
+        ctx[i === hole.length - 1 ? "moveTo" : "lineTo"](p.x, p.y);
+      }
+      ctx.closePath();
+    });
+
+    // fill
+    ctx.fillStyle = colors.fill;
+    ctx.fill("evenodd");
+
+    // stroke boundary
+    ctx.strokeStyle = colors.stroke;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.stroke();
+
+    // draw label at center
+    const navTargets = reg.nav_targets || {};
+    const centerPt = navTargets.center;
+    if (centerPt) {
+      const sp = worldToScreen(centerPt.x, centerPt.y);
+      const label = reg.label || reg.id;
+      ctx.fillStyle = "#142b26";
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      // text background for readability
+      const metrics = ctx.measureText(label);
+      const tw = metrics.width + 12;
+      const th = 24;
+      ctx.fillStyle = "rgba(255, 250, 242, 0.88)";
+      const rr = 6;
+      const rx = sp.x - tw / 2, ry = sp.y - th / 2;
+      ctx.beginPath();
+      ctx.moveTo(rx + rr, ry);
+      ctx.lineTo(rx + tw - rr, ry);
+      ctx.arcTo(rx + tw, ry, rx + tw, ry + rr, rr);
+      ctx.lineTo(rx + tw, ry + th - rr);
+      ctx.arcTo(rx + tw, ry + th, rx + tw - rr, ry + th, rr);
+      ctx.lineTo(rx + rr, ry + th);
+      ctx.arcTo(rx, ry + th, rx, ry + th - rr, rr);
+      ctx.lineTo(rx, ry + rr);
+      ctx.arcTo(rx, ry, rx + rr, ry, rr);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = colors.stroke;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = colors.stroke;
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, sp.x, sp.y);
+    }
+
+    // highlight robot region
+    if (reg.id === appState.regionHighlight) {
+      ctx.strokeStyle = "#d1495b";
+      ctx.lineWidth = 4;
+      ctx.setLineDash([6, 4]);
+      // re-trace outer boundary for highlight
+      ctx.beginPath();
+      boundary.forEach((pt, i) => {
+        const p = worldToScreen(pt.x, pt.y);
+        ctx[i === 0 ? "moveTo" : "lineTo"](p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  });
+}
+
+function updateRegionList() {
+  const container = document.getElementById("regionList");
+  if (!appState.regions.length) {
+    container.innerHTML = '<span class="hint">点击"分割地图"自动识别房间和走廊</span>';
+    document.getElementById("saveRegionsBtn").disabled = true;
+    document.getElementById("clearRegionsBtn").disabled = true;
+    return;
+  }
+
+  document.getElementById("saveRegionsBtn").disabled = false;
+  document.getElementById("clearRegionsBtn").disabled = false;
+
+  const typeLabels = { room: "房间", corridor: "走廊" };
+  container.innerHTML = appState.regions.map(reg => {
+    const colors = appState.regionColors[reg.id];
+    const colorHex = colors ? colors.stroke : "#888";
+    const typeLabel = typeLabels[reg.type] || reg.type;
+    const areaText = reg.area_sqm ? `${reg.area_sqm.toFixed(1)} m²` : "";
+    const connects = (reg.connects_to || []).length
+      ? `<div class="region-connects">↳ 连接: ${reg.connects_to.join(", ")}</div>`
+      : "";
+    const highlightCls = reg.id === appState.regionHighlight ? "region-highlight" : "";
+    return `<div class="region-item ${highlightCls}" data-region-id="${reg.id}">
+      <span class="region-color-dot" style="background:${colorHex}"></span>
+      <span class="region-label" data-region-id="${reg.id}">${reg.label}</span>
+      <span class="region-type-badge">${typeLabel}</span>
+      <span class="region-area">${areaText}</span>
+      ${connects}
+    </div>`;
+  }).join("");
+
+  // click label to rename
+  container.querySelectorAll(".region-label").forEach(el => {
+    el.addEventListener("click", () => startRename(el));
+  });
+}
+
+function startRename(labelEl) {
+  const regionId = labelEl.dataset.regionId;
+  const currentLabel = labelEl.textContent;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = currentLabel;
+  input.className = "region-rename-input";
+  input.maxLength = 32;
+
+  const finishRename = async () => {
+    const newLabel = input.value.trim();
+    if (newLabel && newLabel !== currentLabel) {
+      try {
+        const res = await fetchJSON("/api/map/regions/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: regionId, label: newLabel }),
+        });
+        if (res.ok) {
+          await refreshRegions();
+          draw();
+        }
+      } catch (_err) {
+        // ignore
+      }
+    }
+    // restore label display
+    labelEl.style.display = "";
+    input.replaceWith(labelEl);
+  };
+
+  input.addEventListener("blur", finishRename);
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { input.value = currentLabel; input.blur(); }
+  });
+
+  labelEl.style.display = "none";
+  labelEl.parentNode.insertBefore(input, labelEl.nextSibling);
+  input.focus();
+  input.select();
+}
+
+async function handleSegmentMap() {
+  const btn = document.getElementById("segmentMapBtn");
+  btn.disabled = true;
+  btn.textContent = "分割中...";
+  try {
+    const res = await fetchJSON("/api/map/segment", { method: "POST" });
+    if (!res.ok) {
+      document.getElementById("commandResult").textContent = `分割失败: ${res.error}`;
+    } else {
+      document.getElementById("commandResult").textContent =
+        `分割完成: ${res.regions.length} 个区域，机器人在 ${res.robot_region || "未知区域"}`;
+    }
+  } catch (_err) {
+    document.getElementById("commandResult").textContent = "分割请求失败";
+  }
+  btn.disabled = false;
+  btn.textContent = "分割地图";
+  await refreshRegions();
+  draw();
+}
+
+async function handleSaveRegions() {
+  try {
+    const res = await fetchJSON("/api/map/regions/save", { method: "POST" });
+    if (res.ok) {
+      document.getElementById("commandResult").textContent =
+        `区域已保存到: ${res.filepath} (${res.region_count} 个区域)`;
+    } else {
+      document.getElementById("commandResult").textContent = `保存失败: ${res.error}`;
+    }
+  } catch (_err) {
+    document.getElementById("commandResult").textContent = "保存请求失败";
+  }
+}
+
+async function handleClearRegions() {
+  await fetchJSON("/api/map/regions/clear", { method: "POST" });
+  appState.regions = [];
+  appState.regionColors = {};
+  appState.regionHighlight = null;
+  updateRegionList();
+  draw();
+  document.getElementById("commandResult").textContent = "区域数据已清除";
+}
+
 async function boot() {
   resizeCanvas();
   updateRouteList();
@@ -628,11 +933,14 @@ async function boot() {
   await refreshOverlay();
   refreshCameraFrame();
   await refreshPatrolState();
+  await refreshRegions();
   setInterval(refreshStatus, 1000);
-  setInterval(refreshOverlay, 700);
-  setInterval(refreshMap, 3000);
+  setInterval(refreshOverlay, 500);
+  setInterval(refreshPose, 500);
+  setInterval(refreshMap, 1000);
   setInterval(refreshDetectionStats, 1000);
   setInterval(refreshPatrolState, 500);
+  setInterval(refreshRegions, 2000);
 
   document.getElementById("generatePatrolRoute").addEventListener("click", handleGenerateRoute);
   document.getElementById("startPatrol").addEventListener("click", handleStartPatrol);
@@ -640,6 +948,60 @@ async function boot() {
   document.getElementById("closePatrolReport").addEventListener("click", () => {
     document.getElementById("patrolReport").style.display = "none";
   });
+  document.getElementById("segmentMapBtn").addEventListener("click", handleSegmentMap);
+  document.getElementById("saveRegionsBtn").addEventListener("click", handleSaveRegions);
+  document.getElementById("clearRegionsBtn").addEventListener("click", handleClearRegions);
+
+  // canvas click → select region (only when not in route mode)
+  canvas.addEventListener("click", (event) => {
+    if (appState.routeMode) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = event.clientX - rect.left;
+    const my = event.clientY - rect.top;
+
+    // hit-test regions in reverse draw order (topmost first)
+    appState.regionHighlight = null;
+    for (let i = appState.regions.length - 1; i >= 0; i--) {
+      const reg = appState.regions[i];
+      const boundary = reg.boundary || [];
+      if (boundary.length < 3) continue;
+
+      // convert boundary to screen coords
+      const screenPts = boundary.map(pt => worldToScreen(pt.x, pt.y));
+      if (isPointInPolygon(mx, my, screenPts)) {
+        appState.regionHighlight = reg.id;
+        // If holes, check that point is not in a hole
+        const holes = reg.holes || [];
+        let inHole = false;
+        for (const hole of holes) {
+          if (hole.length < 3) continue;
+          const holePts = hole.map(pt => worldToScreen(pt.x, pt.y));
+          if (isPointInPolygon(mx, my, holePts)) {
+            inHole = true;
+            break;
+          }
+        }
+        if (!inHole) break;
+        appState.regionHighlight = null;
+      }
+    }
+    updateRegionList();
+    draw();
+  });
+}
+
+// point-in-polygon ray casting
+function isPointInPolygon(px, py, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    if (((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 boot();

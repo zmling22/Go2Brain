@@ -182,6 +182,13 @@ button.ghost.active {
   font-weight: 700;
 }
 
+.fps-badge {
+  font-size: 12px;
+  color: #5f7a72;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .camera-feed {
   width: 100%;
   aspect-ratio: 16 / 10;
@@ -508,6 +515,101 @@ button.ghost.active {
 
 .sidebar {
   overflow: hidden;
+}
+
+/* ---- regions panel ---- */
+
+.regions-panel {
+  border-left: 3px solid #4a90d9;
+}
+
+.regions-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.region-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.region-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(20, 43, 38, 0.04);
+  cursor: default;
+  transition: background 120ms ease;
+}
+
+.region-item:hover {
+  background: rgba(20, 43, 38, 0.08);
+}
+
+.region-item.region-highlight {
+  background: rgba(209, 73, 91, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(209, 73, 91, 0.25);
+}
+
+.region-color-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.region-label {
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.region-label:hover {
+  background: rgba(74, 144, 217, 0.12);
+}
+
+.region-type-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(20, 43, 38, 0.08);
+  color: #35564c;
+}
+
+.region-area {
+  font-size: 11px;
+  color: #5f7a72;
+  margin-left: auto;
+}
+
+.region-connects {
+  width: 100%;
+  font-size: 11px;
+  color: #5f7a72;
+  padding-left: 16px;
+}
+
+.region-rename-input {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid #4a90d9;
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: white;
+  width: 120px;
+  outline: none;
 }
 
 @media (max-width: 980px) {

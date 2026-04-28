@@ -109,6 +109,15 @@ class SharedState:
     camera_cy: float = 0.0
     camera_info_available: bool = False
 
+    # FPS monitoring
+    camera_fps: float = 0.0
+    map_fps: float = 0.0
+
+    # region segmentation fields
+    regions: List[dict] = field(default_factory=list)
+    robot_region: Optional[str] = None
+    region_yaml_path: str = ""
+
 
 state = SharedState()
 lock = threading.Lock()
@@ -180,6 +189,12 @@ class DashboardBridge(Node):
         self.follow_waypoints_client = ActionClient(self, FollowWaypoints, "/FollowWaypoints")
         self.current_goal_handle = None
 
+        # FPS tracking counters (accessed only from spin thread, no lock needed)
+        self._camera_fps_count = 0
+        self._camera_fps_timer = time.time()
+        self._map_fps_count = 0
+        self._map_fps_timer = time.time()
+
     def publish_text_command(self, text: str) -> None:
         msg = String()
         msg.data = text
@@ -244,9 +259,19 @@ class DashboardBridge(Node):
             state.updated_at = time.time()
 
     def map_cb(self, msg: OccupancyGrid) -> None:
+        now = time.time()
+        self._map_fps_count += 1
+        computed_fps = None
+        if now - self._map_fps_timer >= 2.0:
+            computed_fps = self._map_fps_count / (now - self._map_fps_timer)
+            self._map_fps_count = 0
+            self._map_fps_timer = now
+
         with lock:
             state.map_msg = msg
             state.map_seq += 1
+            if computed_fps is not None:
+                state.map_fps = round(computed_fps, 1)
             state.updated_at = time.time()
 
     def plan_cb(self, msg: Path) -> None:
@@ -292,11 +317,21 @@ class DashboardBridge(Node):
         else:
             return
 
+        now = time.time()
+        self._camera_fps_count += 1
+        computed_fps = None
+        if now - self._camera_fps_timer >= 2.0:
+            computed_fps = self._camera_fps_count / (now - self._camera_fps_timer)
+            self._camera_fps_count = 0
+            self._camera_fps_timer = now
+
         with lock:
             state.camera_jpeg = bytes(msg.data)
-            state.camera_stamp = time.time()
+            state.camera_stamp = now
             state.camera_format = image_format
-            state.updated_at = time.time()
+            if computed_fps is not None:
+                state.camera_fps = round(computed_fps, 1)
+            state.updated_at = now
         with camera_condition:
             camera_condition.notify_all()
 
@@ -329,11 +364,21 @@ class DashboardBridge(Node):
         except Exception:
             return
 
+        now = time.time()
+        self._camera_fps_count += 1
+        computed_fps = None
+        if now - self._camera_fps_timer >= 2.0:
+            computed_fps = self._camera_fps_count / (now - self._camera_fps_timer)
+            self._camera_fps_count = 0
+            self._camera_fps_timer = now
+
         with lock:
             state.camera_jpeg = jpg.tobytes()
-            state.camera_stamp = time.time()
+            state.camera_stamp = now
             state.camera_format = "jpeg"
-            state.updated_at = time.time()
+            if computed_fps is not None:
+                state.camera_fps = round(computed_fps, 1)
+            state.updated_at = now
         with camera_condition:
             camera_condition.notify_all()
 
@@ -344,13 +389,19 @@ class DashboardBridge(Node):
             data = json.loads(msg.data)
         except Exception:
             return
+        patrol_active = False
+        objects = None
         with lock:
             state.detection_results = data
             state.detection_stamp = time.time()
             state.updated_at = time.time()
-            # patrol: check for persons
-            if state.patrol_active and data.get("objects"):
-                self._check_patrol_detections(data["objects"])
+            patrol_active = state.patrol_active
+            objects = list(data.get("objects", [])) if data.get("objects") else None
+
+        # Check for persons outside lock to avoid self-deadlock (detection_stats_cb
+        # already runs in the spin thread; _record_person_detection also acquires lock).
+        if patrol_active and objects:
+            self._check_patrol_detections(objects)
 
     # ---- depth / camera info callbacks ----
 
@@ -414,6 +465,43 @@ class DashboardBridge(Node):
             state.patrol_status = "route_ready"
         return {"ok": True, "waypoints": waypoints}
 
+    # ---- region segmentation ----
+
+    def segment_map(self, room_clearance_m: float = 0.7,
+                    min_room_area_m2: float = 2.0) -> Dict[str, Any]:
+        """Run room/corridor segmentation on the current map."""
+        with lock:
+            map_msg = state.map_msg
+            pose = state.pose
+
+        if map_msg is None:
+            return {"ok": False, "error": "map unavailable"}
+        if pose is None:
+            return {"ok": False, "error": "robot pose unknown"}
+
+        resolution = map_msg.info.resolution
+
+        result = patrol_core.segment_map(
+            map_data=list(map_msg.data),
+            width=map_msg.info.width,
+            height=map_msg.info.height,
+            resolution=resolution,
+            origin_x=map_msg.info.origin.position.x,
+            origin_y=map_msg.info.origin.position.y,
+            robot_x=pose["x"],
+            robot_y=pose["y"],
+            room_clearance_m=room_clearance_m,
+            min_room_area_m2=min_room_area_m2,
+        )
+
+        with lock:
+            state.regions = result.get("regions", [])
+            state.robot_region = result.get("robot_region")
+
+        print(f"[segment_map] {len(state.regions)} regions, "
+              f"robot in {state.robot_region}")
+        return {"ok": True, **result}
+
     def start_patrol(self) -> Dict[str, Any]:
         """Start patrol execution."""
         with lock:
@@ -469,16 +557,19 @@ class DashboardBridge(Node):
             state.patrol_photo_seq = seq
 
         # read latest frame from raw_camera_cb for photo
+        # Copy JPEG bytes under lock (quick), then decode outside lock (slow).
         bgr_frame: Optional[np.ndarray] = None
+        jpeg_bytes: Optional[bytes] = None
         with lock:
-            if state.camera_jpeg is not None:
-                try:
-                    bgr_frame = cv2.imdecode(
-                        np.frombuffer(state.camera_jpeg, np.uint8),
-                        cv2.IMREAD_COLOR,
-                    )
-                except Exception:
-                    pass
+            jpeg_bytes = state.camera_jpeg
+        if jpeg_bytes is not None:
+            try:
+                bgr_frame = cv2.imdecode(
+                    np.frombuffer(jpeg_bytes, np.uint8),
+                    cv2.IMREAD_COLOR,
+                )
+            except Exception:
+                pass
 
         # project to map coordinates
         loc: Optional[Dict[str, Any]] = None
@@ -736,6 +827,10 @@ def api_status():
             "patrol_waypoint_count": len(state.patrol_waypoints),
             "patrol_current_index": state.patrol_current_index,
             "patrol_person_count": len(state.patrol_person_detections),
+            "camera_fps": state.camera_fps,
+            "map_fps": state.map_fps,
+            "region_count": len(state.regions),
+            "robot_region": state.robot_region,
             "updated_at": state.updated_at,
         }
     return jsonify(response)
@@ -750,10 +845,16 @@ def api_map():
     if map_msg is None:
         return jsonify({"ok": False, "error": "map unavailable"}), 404
 
+    # If client already has this seq, skip sending full data
+    client_seq = request.args.get("seq", type=int)
+    if client_seq is not None and client_seq == map_seq:
+        return jsonify({"ok": True, "seq": map_seq, "changed": False})
+
     return jsonify(
         {
             "ok": True,
             "seq": map_seq,
+            "changed": True,
             "width": map_msg.info.width,
             "height": map_msg.info.height,
             "resolution": map_msg.info.resolution,
@@ -775,11 +876,26 @@ def api_overlay():
             {
                 "ok": True,
                 "pose": state.pose,
-                "trajectory": state.trajectory,
+                # limit trajectory to last 200 points for bandwidth
+                "trajectory": state.trajectory[-200:] if len(state.trajectory) > 200 else state.trajectory,
                 "plan": state.plan,
                 "current_route": state.current_route,
                 "current_waypoint_index": state.current_waypoint_index,
                 "route_running": state.route_running,
+            }
+        )
+
+
+@app.get("/api/pose")
+def api_pose():
+    """Lightweight pose-only endpoint for ~200ms polling (fast robot position)."""
+    with lock:
+        return jsonify(
+            {
+                "ok": True,
+                "pose": state.pose,
+                "speed": state.speed,
+                "updated_at": state.updated_at,
             }
         )
 
@@ -894,6 +1010,111 @@ def api_detection_toggle():
     with lock:
         state.show_detection = bool(enabled)
     return jsonify({"ok": True, "enabled": state.show_detection})
+
+
+# ---- region segmentation APIs ----
+
+
+@app.post("/api/map/segment")
+def api_map_segment():
+    """Trigger room/corridor segmentation on the current map."""
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        result = ros_node.segment_map(
+            room_clearance_m=float(data.get("room_clearance_m", 0.7)),
+            min_room_area_m2=float(data.get("min_room_area_m2", 2.0)),
+        )
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    status = 200 if result.get("ok") else 400
+    return jsonify(result), status
+
+
+@app.get("/api/map/regions")
+def api_map_regions():
+    """Return current regions from memory."""
+    with lock:
+        return jsonify({
+            "ok": True,
+            "regions": state.regions,
+            "robot_region": state.robot_region,
+            "region_count": len(state.regions),
+        })
+
+
+@app.post("/api/map/regions/rename")
+def api_map_region_rename():
+    """Rename a region (e.g. ``room_1`` → ``客厅``)."""
+    data = request.get_json(force=True, silent=True) or {}
+    region_id = (data.get("id") or "").strip()
+    new_label = (data.get("label") or "").strip()
+    if not region_id or not new_label:
+        return jsonify({"ok": False, "error": "id and label required"}), 400
+
+    with lock:
+        found = False
+        for reg in state.regions:
+            if reg["id"] == region_id:
+                reg["label"] = new_label
+                found = True
+                break
+    if not found:
+        return jsonify({"ok": False, "error": f"region '{region_id}' not found"}), 404
+    return jsonify({"ok": True, "region_id": region_id, "label": new_label})
+
+
+@app.post("/api/map/regions/save")
+def api_map_regions_save():
+    """Save current regions to a YAML file."""
+    data = request.get_json(force=True, silent=True) or {}
+    filepath = (data.get("filepath") or "").strip()
+
+    if not filepath:
+        # default: save alongside semantic_map.yaml so semantic_navigator can use it
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        filepath = os.path.join(script_dir, "semantic_regions.yaml")
+
+    with lock:
+        regions_copy = list(state.regions)
+        yaml_path = filepath
+
+    ok = patrol_core.save_semantic_map_yaml(regions_copy, filepath)
+    if not ok:
+        return jsonify({"ok": False, "error": "save failed (missing yaml module?)"}), 500
+
+    with lock:
+        state.region_yaml_path = filepath
+    return jsonify({"ok": True, "filepath": filepath, "region_count": len(regions_copy)})
+
+
+@app.get("/api/map/regions/load")
+def api_map_regions_load():
+    """Load regions from a YAML file."""
+    filepath = request.args.get("filepath", "").strip()
+    if not filepath:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        filepath = os.path.join(script_dir, "semantic_regions.yaml")
+
+    data = patrol_core.load_semantic_map_yaml(filepath)
+    if data is None:
+        return jsonify({"ok": False, "error": "load failed or file not found"}), 404
+
+    with lock:
+        state.regions = data.get("regions", [])
+        state.region_yaml_path = filepath
+    return jsonify({"ok": True, "regions": state.regions,
+                    "region_count": len(state.regions)})
+
+
+@app.post("/api/map/regions/clear")
+def api_map_regions_clear():
+    """Clear all region data from memory."""
+    with lock:
+        state.regions = []
+        state.robot_region = None
+    return jsonify({"ok": True})
 
 
 # ---- patrol APIs ----
