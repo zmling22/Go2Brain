@@ -37,3 +37,9 @@ go2_ros2_toolbox/unitree_pkgs/go2_h264_repub/go2_h264_repub
 # Patrol runtime data (photos, reports)
 flask/static/patrol_photos/
 flask/static/patrol_reports/
+app/static/patrol_photos/
+app/static/patrol_reports/
+
+# Generated voice cache
+app/static/voice_alerts/*.mp3
+app/static/voice_alerts/*.wav
